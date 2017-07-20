@@ -1,0 +1,796 @@
+/*------------------------------------------------------------------------
+        File        : sSuppJobsXls.p
+        Purpose     :
+        
+        Syntax      :
+       
+        Description : Procedure gets data from Support system, then generates an Xls.
+       
+        Author(s)   : enl
+        Created     : Thu Jun 29 11:42:40 BST 2017
+        Notes       :
+      ----------------------------------------------------------------------*/
+       
+    /* ***************************  Definitions  ************************** */
+    DEFINE TEMP-TABLE tt-Data NO-UNDO
+        FIELD cJOBDISP            AS CHARACTER FORMAT "x(20)"
+        FIELD cDisplayStatus      AS CHARACTER FORMAT "x(8)"
+        FIELD cJOBDEPT            AS CHARACTER FORMAT "x(5)"
+        FIELD cCustomerAccount    AS CHARACTER FORMAT "x(7)"
+        FIELD cCustomerName       AS CHARACTER FORMAT "x(35)"
+        FIELD cProductDescription AS CHARACTER FORMAT "x(30)"  
+        FIELD cJobStatus          AS CHARACTER FORMAT "x(10)"
+       
+        /* FIELDS for cost processing : */
+        FIELD dUnprocessedCosts   AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        FIELD dProcessedCosts     AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        FIELD dTotalCosts         AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        FIELD dUnprocessedSales   AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        FIELD dProcessedSales     AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        FIELD dTotalSales         AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        FIELD dProfit             AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        /* FIELDS for Linking Quote : */
+        FIELD cQuoteNumber        AS CHARACTER FORMAT "99999999"
+        FIELD cQuoteDept          AS CHARACTER FORMAT "x(5)"
+        FIELD dCostTotal          AS DECIMAL   FORMAT "->>>>,>>9.99"
+        FIELD dSalesTotal         AS DECIMAL   FORMAT "->>>>,>>9.99"
+        FIELD dQuoteProfit        AS DECIMAL   FORMAT "->>>,>>>,>>9.99"
+        FIELD cQuoteReference     AS CHARACTER FORMAT "x(20)"
+        /*HOTH*/
+        FIELD cReference          AS CHARACTER
+        FIELD cCatstatus          AS CHARACTER
+        FIELD cCatstatus-desc     AS CHARACTER
+        FIELD cSsubtype           AS CHARACTER
+        FIELD cSsubtype-desc      AS CHARACTER
+        FIELD cClosedate          AS CHARACTER
+        FIELD cCattype            AS CHARACTER
+        FIELD cCattype-desc       AS CHARACTER
+        FIELD cHandlertag         AS CHARACTER
+        FIELD cSzfield            AS CHARACTER
+        /*Activities*/
+        FIELD cActiondate         AS CHARACTER
+        FIELD cSAction            AS CHARACTER
+        FIELD cSAction-desc       AS CHARACTER
+        FIELD cSzassingee         AS CHARACTER
+        FIELD cDtschdate          AS CHARACTER
+        FIELD iSequenceNumber     AS INTEGER
+        INDEX OrderData cJOBDISP.
+       
+    DEFINE BUFFER b-Data FOR tt-Data.
+       
+    DEFINE TEMP-TABLE tt-HOTH NO-UNDO
+        FIELD cReference          AS CHARACTER
+        FIELD cCatstatus          AS CHARACTER
+        FIELD cSsubtype           AS CHARACTER
+        FIELD cClosedate          AS CHARACTER
+        FIELD cCattype            AS CHARACTER
+        FIELD cHandlertag         AS CHARACTER
+        FIELD cActiondate         AS CHARACTER
+        FIELD cSzfield            AS CHARACTER
+        FIELD HOTHNOQUERY         AS CHARACTER
+        FIELD HOTHCATQUERY        AS CHARACTER
+        INDEX Order cSzfield.
+       
+    DEFINE TEMP-TABLE tt-Activities NO-UNDO
+        FIELD cSzreference        AS CHARACTER
+        FIELD cSAction            AS CHARACTER
+        FIELD cActionDate         AS CHARACTER
+        FIELD cSAction-desc       AS CHARACTER
+        FIELD cSzassingee         AS CHARACTER
+        FIELD cDtschdate          AS CHARACTER
+        FIELD iSequenceNumber     AS INTEGER
+        INDEX Order cSzreference.
+       
+    DEFINE TEMP-TABLE tt-HOTH2 NO-UNDO
+        FIELD cNo                 AS CHARACTER
+        FIELD cCategory           AS CHARACTER.
+       
+    /*Local Variables*/
+    DEFINE VARIABLE ilv-seq-number          AS INTEGER   NO-UNDO INITIAL 1.
+    DEFINE VARIABLE ilv-1                   AS INTEGER   NO-UNDO.
+    DEFINE VARIABLE clv-filename            AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE iCount                  AS INTEGER   NO-UNDO.
+    DEFINE VARIABLE dlv-TotalUnProcCosts    AS DECIMAL   NO-UNDO.
+    DEFINE VARIABLE dlv-TotalProcCosts      AS DECIMAL   NO-UNDO.
+    DEFINE VARIABLE dlv-TotalProcSales      AS DECIMAL   NO-UNDO.
+    DEFINE VARIABLE dlv-TotalUnProcSales    AS DECIMAL   NO-UNDO.
+    DEFINE VARIABLE ilv-i                   AS INTEGER   NO-UNDO.
+    DEFINE VARIABLE clv-temp                AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-quote-number        AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-smtp-host           AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE llv-smtp-use-spa        AS LOGICAL   NO-UNDO.
+    DEFINE VARIABLE clv-smtp-user           AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-smtp-pwd            AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-smtp-spare          AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-attach-name-encoded AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-attach-name-full    AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE llv-ok                  AS LOGICAL   NO-UNDO.
+    DEFINE VARIABLE clv-rtn-message         AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE dlv-rptDate             AS DATE      NO-UNDO INIT TODAY.
+    DEFINE VARIABLE dtestDate               AS DATE      NO-UNDO INIT "06/20/2017".
+    DEFINE VARIABLE rlv-Activityrowid       AS ROWID     NO-UNDO.
+    DEFINE VARIABLE ilv-sequencenumber      AS INTEGER   NO-UNDO. 
+    DEFINE VARIABLE clv-param               AS CHARACTER NO-UNDO.   
+    DEFINE VARIABLE clv-dept                AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE ilv-noofdays            AS INTEGER   NO-UNDO.
+    DEFINE VARIABLE clv-emailaddresses      AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-new-xls-name        AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-filename-plus-ext   AS CHARACTER NO-UNDO.
+    DEFINE VARIABLE clv-name-of-template    AS CHARACTER NO-UNDO.
+   
+    DEFINE STREAM csv-stream.
+       
+    
+    /* -------------------- MAIN LINE CODE -------------------- */
+   
+    /* read parameters from scheduled task */
+    clv-param = SESSION:PARAMETER.
+    IF NUM-ENTRIES(clv-param) NE 4 THEN
+        QUIT.
+   
+    ASSIGN clv-dept             = ENTRY(1,clv-param)
+           ilv-noofdays         = INTEGER(ENTRY(2,clv-param))
+           clv-emailaddresses   = ENTRY(3,clv-param)
+           clv-name-of-template = ENTRY(4,clv-param).
+ 
+    /* Allows additional Email Addresses in batch file replacing ^ with
+       a comma list as lists not allowed in passed parameters */              
+    clv-emailaddresses = REPLACE(clv-emailaddresses ,"^",",").
+        
+    RUN ReadHOTData.
+   
+    FIND FIRST company NO-LOCK NO-ERROR.
+    IF NOT AVAILABLE company THEN
+    DO:
+        MESSAGE 'Company record not found. Cannot continue' VIEW-AS ALERT-BOX.
+        RETURN.
+    END.   
+    
+    ASSIGN clv-smtp-host    = company.smtp-host
+           llv-smtp-use-spa = company.smtp-use-spa
+           clv-smtp-user    = company.smtp-user
+           clv-smtp-pwd     = company.smtp-pwd
+           clv-smtp-spare   = company.smtp-spare.
+   
+    IF clv-smtp-host = ""
+    THEN
+    DO:
+        MESSAGE 'Unable to send email' SKIP
+                'No SMTP host is setup for company ' company.company VIEW-AS ALERT-BOX ERROR.
+        RETURN.
+    END.
+   
+    IF clv-smtp-host = "" THEN
+    DO:
+        /*Review message below - potentially causing issues*/
+        MESSAGE 'Unable to send email' SKIP
+                'No SMTP host is setup for company ' company.company VIEW-AS ALERT-BOX ERROR.
+        RETURN.
+    END.
+   
+   
+    dlv-rptDate = TODAY - ilv-noofdays.
+   
+    /* Jobs loop */
+       
+    FOR EACH job-hdr WHERE job-hdr.job-dept = clv-dept 
+                     AND   job-hdr.job-date >= dlv-rptDate NO-LOCK:
+                    
+        IF job-hdr.job-status = "D" THEN
+            NEXT.
+ 
+        FIND FIRST address WHERE address.address-code = job-hdr.address-code NO-LOCK NO-ERROR.
+           
+        CREATE tt-Data.
+        ASSIGN tt-Data.cJOBDISP            = job-hdr.job-disp
+               tt-Data.cDisplayStatus      = job-hdr.display-status
+               tt-Data.cCustomerAccount    = job-hdr.address-code
+               tt-Data.cCustomerName       = (IF AVAILABLE address THEN address.name ELSE "")
+               tt-Data.cJOBDEPT            = job-hdr.job-dept
+               tt-Data.cProductDescription = job-hdr.product-desc.
+                  
+        /* Job Status has been removed*/
+        CASE job-hdr.job-status:
+            WHEN "P" THEN ASSIGN tt-Data.cJobStatus = "Provisional".
+            WHEN "O" THEN ASSIGN tt-Data.cJobStatus = "Open".
+            WHEN "C" THEN ASSIGN tt-Data.cJobStatus = "Closed".
+            WHEN "L" THEN ASSIGN tt-Data.cJobStatus = "Locked".
+            WHEN "F" THEN ASSIGN tt-Data.cJobStatus = "Finished".
+            WHEN "S" THEN ASSIGN tt-Data.cJobStatus = "Signed-Off".
+            OTHERWISE ASSIGN tt-Data.cJobStatus = job-hdr.job-status.
+        END CASE.
+             
+        ASSIGN dlv-TotalUnProcCosts = 0
+               dlv-TotalProcCosts   = 0
+               dlv-TotalUnProcSales = 0
+               dlv-TotalProcSales   = 0.
+                                 
+        
+        /* Costs And Charges */                      
+        FOR EACH rec-link WHERE rec-link.rec-id      = job-hdr.job-id
+                            AND rec-link.record-link = "J"  NO-LOCK:
+            FIND FIRST rec-chg OF rec-link NO-LOCK NO-ERROR.
+            IF AVAILABLE rec-chg THEN
+            DO:
+                IF rec-chg.invoice-number = "" THEN
+                    dlv-TotalUnProcSales = dlv-TotalUnProcSales + rec-chg.base-sales-value.
+                ELSE
+                    dlv-TotalProcSales   = dlv-TotalProcSales   + rec-chg.base-sales-value.
+            END.
+               
+            FIND FIRST rec-cost OF rec-link NO-LOCK NO-ERROR.
+            IF AVAILABLE rec-cost THEN
+            DO:
+                IF rec-cost.cost-processed = FALSE 
+                    THEN dlv-TotalUnProcCosts = dlv-TotalUnProcCosts + rec-cost.base-cost-value.
+                    ELSE dlv-TotalProcCosts   = dlv-TotalProcCosts   + rec-cost.base-cost-value.
+            END.       
+        END.
+           
+        ASSIGN tt-Data.dUnprocessedCosts = dlv-TotalUnProcCosts
+               tt-Data.dProcessedCosts   = dlv-TotalProcCosts
+               tt-Data.dTotalCosts       = dlv-TotalProcCosts + dlv-TotalUnProcCosts
+               tt-Data.dUnprocessedSales = dlv-TotalUnProcSales
+               tt-Data.dProcessedSales   = dlv-TotalProcSales
+               tt-Data.dTotalSales       = dlv-TotalUnProcSales + dlv-TotalProcSales
+               tt-Data.dProfit           = tt-Data.dTotalSales - tt-Data.dTotalCosts.
+                  
+        
+                   
+                 
+        /* Get Quote Information */ 
+        clv-quote-number = ''.
+                    
+        FIND FIRST diary WHERE diary.job-id     = job-hdr.job-id
+                           AND diary.event-code = 'CREATEJOB' NO-LOCK NO-ERROR.
+        IF AVAILABLE diary
+        AND INDEX(diary.event-text,'This job was created from quote') NE 0 THEN
+        DO:
+            ilv-i            = INDEX(diary.event-text,'This job was created from quote').
+            clv-temp         = SUBSTRING(diary.event-text,ilv-i + 32).
+            clv-quote-number = LEFT-TRIM(ENTRY(1,clv-temp,' ')).
+        END.
+          
+        IF clv-quote-number NE '' THEN
+        DO:      
+            FIND FIRST quo-hdr WHERE quo-hdr.quo-disp = clv-quote-number NO-LOCK NO-ERROR.
+            IF AVAILABLE quo-hdr THEN
+            DO:
+                ASSIGN dlv-TotalUnProcCosts = 0
+                       dlv-TotalUnProcSales = 0.
+                      
+                FOR EACH rec-link WHERE rec-link.rec-id      = quo-hdr.quo-id
+                                    AND rec-link.record-link = "Q"  NO-LOCK:
+                                           
+                    FIND FIRST rec-chg OF rec-link NO-LOCK NO-ERROR.
+                    IF AVAILABLE rec-chg THEN
+                    DO:
+                        dlv-TotalUnProcSales = dlv-TotalUnProcSales + rec-chg.base-sales-value.
+                    END.
+                       
+                    FIND FIRST rec-cost OF rec-link NO-LOCK NO-ERROR.
+                    IF AVAILABLE rec-cost THEN
+                    DO:
+                        dlv-TotalUnProcCosts = dlv-TotalUnProcCosts + rec-cost.base-cost-value.
+                    END.  
+                END.
+                   
+                ASSIGN tt-Data.cQuoteNumber    = quo-hdr.quo-disp
+                       tt-Data.cQuoteDept      = quo-hdr.quo-dept
+                       tt-Data.dSalesTotal     = dlv-TotalUnProcSales
+                       tt-Data.dCostTotal      = dlv-TotalUnProcCosts
+                       tt-Data.cQuoteReference = quo-hdr.cust-ref
+                       tt-Data.dQuoteProfit    = tt-Data.dSalesTotal - tt-Data.dCostTotal.
+            END.
+        END.
+         
+                    
+        /*House On The Hill Data*/
+        FIND FIRST tt-HOTH WHERE tt-HOTH.cSzfield = job-hdr.job-disp NO-LOCK NO-ERROR.     
+        IF AVAILABLE tt-HOTH THEN
+        DO:
+            ASSIGN tt-Data.cReference  = tt-HOTH.cReference
+                   tt-Data.cCatstatus  = tt-HOTH.cCatstatus
+                   tt-Data.cSsubtype   = tt-HOTH.cSsubtype
+                   tt-Data.cClosedate  = tt-HOTH.cClosedate
+                   tt-Data.cCattype    = tt-HOTH.cCattype
+                   tt-Data.cHandlertag = tt-HOTH.cHandlertag
+                   tt-Data.cActiondate = tt-HOTH.cActiondate
+                   tt-Data.cSzfield    = tt-HOTH.cSzfield.
+        END.
+                            
+        /* Translate Codes To Words */
+        FIND FIRST tt-HOTH2 WHERE tt-HOTH2.cNo = tt-Data.cCatstatus NO-ERROR.
+        IF AVAILABLE tt-HOTH2 THEN
+       
+        ASSIGN tt-Data.cCatstatus-desc = tt-HOTH2.cCategory.       
+        
+        FIND FIRST tt-HOTH2 WHERE tt-HOTH2.cNo = tt-Data.cSsubtype NO-ERROR.
+        IF AVAILABLE tt-HOTH2 THEN
+        ASSIGN tt-Data.cSsubtype-desc = tt-HOTH2.cCategory.
+               
+        FIND FIRST tt-HOTH2 WHERE tt-HOTH2.cNo = tt-Data.cCattype NO-ERROR.
+        IF AVAILABLE tt-HOTH2 THEN
+        ASSIGN tt-Data.cCattype-desc = tt-HOTH2.cCategory.           
+                        
+        /* Activities */
+        FIND FIRST tt-Activities WHERE tt-Activities.cSzreference = tt-Data.cReference NO-ERROR.
+        IF AVAILABLE tt-Activities THEN
+        DO:
+            ASSIGN tt-Data.cSAction        = tt-Activities.cSAction
+                   tt-Data.cSzassingee     = tt-Activities.cSzassingee
+                   tt-Data.cDtschdate      = tt-Activities.cDtschdate
+                   tt-Data.iSequenceNumber = 1.
+               
+            rlv-Activityrowid = ROWID(tt-Activities).
+                   
+        FIND FIRST tt-HOTH2 WHERE tt-HOTH2.cNo = tt-Data.cSAction NO-ERROR.
+        IF AVAILABLE tt-HOTH2 THEN
+            ASSIGN tt-Data.cSAction-desc = tt-HOTH2.cCategory.
+                   
+        ilv-sequencenumber = 1.
+               
+        FOR EACH tt-Activities WHERE tt-Activities.cSzreference = tt-Data.cReference:
+            IF ROWID(tt-Activities) = rlv-Activityrowid THEN
+            NEXT.
+                    
+                ilv-sequencenumber = ilv-sequencenumber + 1.
+               
+                BUFFER-COPY tt-Data
+                    EXCEPT tt-Data.cSAction
+                           tt-Data.cSzassingee
+                           tt-Data.cDtschdate 
+                           tt-Data.iSequenceNumber
+                    TO b-Data
+                    ASSIGN b-Data.cSAction        = tt-Activities.cSAction
+                           b-Data.cSzassingee     = tt-Activities.cSzassingee
+                           b-Data.cDtschdate      = tt-Activities.cDtschdate
+                           b-Data.iSequenceNumber = ilv-sequencenumber.
+                           
+                FIND FIRST tt-HOTH2 WHERE tt-HOTH2.cNo = b-Data.cSAction NO-ERROR.
+                IF AVAILABLE tt-HOTH2 THEN
+                ASSIGN b-Data.cSAction-desc = tt-HOTH2.cCategory.
+            END.    
+        END.   
+        ELSE
+        ASSIGN tt-Data.iSequenceNumber = 1.
+    END.
+          
+    RUN createxls.
+                
+    /*Email File :*/
+   
+    clv-attach-name-full = clv-new-xls-name.
+    clv-attach-name-encoded = clv-filename-plus-ext + ":type=application/vnd.ms-excel:filetype=b64encoded".
+ 
+    DO ilv-i = 1 TO NUM-ENTRIES(clv-emailaddresses):
+        RUN r-smtpmail.p(INPUT  clv-smtp-host,                                        /* E-mail Server */
+                         INPUT  ENTRY(ilv-i,clv-emailaddresses),                      /* To Email Address */
+                         INPUT  "Enter Recipient Email Address Here",                 /* From Email Address */
+                         INPUT  "",                                                   /* Carbon Copy Email Address */
+                         INPUT  clv-attach-name-encoded,                              /* Attachment Name */
+                         INPUT  clv-attach-name-full,                                 /* Attachment Full Filename */
+                         INPUT  "Jobs",                                               /* E-mail Subject */
+                         INPUT  "Jobs Spreadsheet attached",                          /* E-mail Body Message */
+                         INPUT  "text/plain",                                         /* MIMEHeader */
+                         INPUT  "",                                                   /* Bodytype */
+                         INPUT  0,                                                    /* Importance Setting */
+                         INPUT  llv-smtp-use-spa,                                     /* Authentification Required */
+                         INPUT  clv-smtp-spare,                                       /* Authentification Type */
+                         INPUT  clv-smtp-user,                                        /* Authentification User */
+                         INPUT  clv-smtp-pwd,                                         /* Authentification Password */
+                         OUTPUT llv-ok,
+                         OUTPUT clv-rtn-message ).
+        
+        /* Delete smtp Temp Files */                
+        RUN r-smtpmail.p(INPUT  clv-smtp-host,                                        /* E-mail Server */
+                         INPUT  "RemoveTempFiles",                                    /* To Email Address */
+                         INPUT  ENTRY(ilv-i,clv-emailaddresses),                      /* From Email Address */
+                         INPUT  "",                                                   /* Carbon Copy Email Address */
+                         INPUT  clv-attach-name-encoded,                              /* Attachment Name */
+                         INPUT  clv-attach-name-full,                                 /* Attachment Full Filename */
+                         INPUT  "Jobs",                                               /* E-mail Subject */
+                         INPUT  "Jobs csv attached",                                  /* E-mail Body Message */
+                         INPUT  "text/plain",                                         /* MIMEHeader */
+                         INPUT  "",                                                   /* Bodytype */
+                         INPUT  0,                                                    /* Importance Setting */
+                         INPUT  llv-smtp-use-spa,                                     /* Authentification Required */
+                         INPUT  clv-smtp-spare,                                       /* Authentification Type */
+                         INPUT  clv-smtp-user,                                        /* Authentification User */
+                         INPUT  clv-smtp-pwd,                                         /* Authentification Password */
+                         OUTPUT llv-ok,
+                         OUTPUT clv-rtn-message ).
+ 
+        /* Delete smtp Encoded Files */
+        RUN r-smtpmail.p(INPUT  clv-smtp-host,                                        /* E-mail Server */
+                         INPUT  "RemoveEncodedFiles",                                 /* To Email Address */
+                         INPUT  ENTRY(ilv-i,clv-emailaddresses),                      /* From Email Address */
+                         INPUT  "",                                                   /* Carbon Copy Email Address */
+                         INPUT  clv-attach-name-encoded,                              /* Attachment Name */
+                         INPUT  clv-attach-name-full,                                 /* Attachment Full Filename */
+                         INPUT  "Jobs",                                               /* E-mail Subject */
+                         INPUT  "Jobs csv attached",                                  /* E-mail Body Message */
+                         INPUT  "text/plain",                                         /* MIMEHeader */
+                         INPUT  "",                                                   /* Bodytype */
+                         INPUT  0,                                                    /* Importance Setting */
+                         INPUT  llv-smtp-use-spa,                                     /* Authentification Required */
+                         INPUT  clv-smtp-spare,                                       /* Authentification Type */
+                         INPUT  clv-smtp-user,                                        /* Authentification User */
+                         INPUT  clv-smtp-pwd,                                         /* Authentification Password */
+                         OUTPUT llv-ok,
+                         OUTPUT clv-rtn-message ).        
+    END.
+   
+    QUIT.
+   
+    
+    
+    
+    
+    
+    
+    
+    
+    
+ /* **********************  Internal Procedures  *********************** */   
+ 
+/*------------------------------------------------------------------------
+        Procedure   : ReadHOTData
+        Purpose     : Provides data for Temp-Table(s)
+      
+        Description : Procedure queries the and Support system database,
+                      Populates the Temp-Table(s)tt-HOTH and tt-HOTH2,
+                      Assigns values to fields
+       
+        Author(s)   : enl
+        Created     : Thu Jun 29 11:42:40 BST 2017
+        Notes       :
+      ----------------------------------------------------------------------*/
+   
+    PROCEDURE ReadHOTData:
+    DEFINE VARIABLE ObjConnection AS COM-HANDLE NO-UNDO.
+    DEFINE VARIABLE ObjRecordSet  AS COM-HANDLE NO-UNDO.
+    DEFINE VARIABLE ObjCommand    AS COM-HANDLE NO-UNDO.
+    DEFINE VARIABLE cOdbcDSN      AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE cOdbcSERVER   AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE cOdbcUSERID   AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE cOdbcPASSWD   AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE cOdbcQUERY    AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE ActivityQuery AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE cOdbcSTATUS   AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE cOdbcNULL     AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE iLoop         AS INTEGER    NO-UNDO.
+ 
+ 
+    /* Create the connection object for the link to SQL */
+    CREATE "ADODB.Connection" ObjConnection.
+ 
+    /* Create a recordset object ready to return the data */
+    CREATE "ADODB.RecordSet" ObjRecordSet.
+ 
+    /* Create a command object for sending the SQL statement */
+    CREATE "ADODB.Command" ObjCommand.
+ 
+    ASSIGN cOdbcDSN    = "HOUSEONTHEHILL" /* The ODBC DSN */
+           cOdbcSERVER = "52.213.123.201,57165" /* The name of the server hosting the SQL DB and DSN */
+           cOdbcUSERID = "suppdesk" /* The user id for access to the SQL Database */
+           cOdbcPASSWD = "password" /* Password required by above user-id */.
+ 
+    /* Open up the connection to the ODBC Layer */
+    ObjConnection:OPEN ( "data source=" + cOdbcDSN + ";server=" + cOdbcSERVER, cOdbcUSERID, cOdbcPASSWD, 0 )  .
+ 
+    /* Check for connection errors */
+    IF ( ERROR-STATUS:NUM-MESSAGES > 0 )THEN
+    cOdbcSTATUS = "Error: Could not establish connection.".
+    ELSE
+    DO:
+        ASSIGN ObjCommand:ActiveConnection  = ObjConnection
+               ObjCommand:CommandType       = 1 /* adCmdText */
+               ObjConnection:CursorLocation = 3 /* adUseClient */
+               ObjRecordSet:CursorType      = 3 /* adOpenStatic */.
+ 
+ 
+        cOdbcQUERY = "SELECT * FROM supextra, supevent WHERE supextra.sfieldno = 10003
+                                                         AND supextra.szfield like 'imj%'
+                                                         AND supevent.reference = supextra.szkey".
+ 
+/*  Testing Query:                                                                                  */
+/*                                                                                                  */
+/*        cOdbcQUERY = "SELECT * FROM supextra, supevent WHERE supextra.sfieldno = 10003            */
+/*                                                         AND supextra.szfield like 'j%'           */
+/*                                                         AND supevent.reference = supextra.szkey".*/
+ 
+ 
+        ObjCommand:CommandText = cOdbcQUERY.
+        ObjRecordSet = ObjCommand:EXECUTE ( OUTPUT cOdbcNULL, "", 32 ).
+ 
+        IF ObjRecordSet:RecordCount > 0 AND ObjRecordSet:RecordCount NE ?
+        THEN
+        DO:
+            ObjRecordSet:MoveFirst NO-ERROR.
+            EMPTY TEMP-TABLE tt-HOTH.
+ 
+            DO iLoop = 1 TO ObjRecordSet:RecordCount:
+                CREATE tt-HOTH.
+                ASSIGN tt-HOTH.cReference  = ObjRecordSet:FIELDS("REFERENCE"):VALUE
+                       tt-HOTH.cCatstatus  = ObjRecordSet:FIELDS("CATSTATUS"):VALUE
+                       tt-HOTH.cSsubtype   = ObjRecordSet:FIELDS("SSUBTYPE"):VALUE
+                       tt-HOTH.cClosedate  = ObjRecordSet:FIELDS("CLOSEDATE"):VALUE
+                       tt-HOTH.cCattype    = ObjRecordSet:FIELDS("CATTYPE"):VALUE
+                       tt-HOTH.cHandlertag = ObjRecordSet:FIELDS("HANDLERTAG"):VALUE
+                       tt-HOTH.cActiondate = ObjRecordSet:FIELDS("ACTIONDATE"):VALUE
+                       tt-HOTH.cSzfield    = ObjRecordSet:FIELDS("SZFIELD"):VALUE.
+ 
+                ASSIGN tt-HOTH.cActiondate = SUBSTRING(tt-HOTH.cActiondate,1,10).
+ 
+                IF tt-HOTH.cActiondate = "01/01/1900" THEN
+                tt-HOTH.cActiondate = "".
+ 
+                ObjRecordSet:MoveNext NO-ERROR.
+            END.
+        END.
+ 
+ 
+ 
+        /* Code Translation Table */
+ 
+        HOTHNOQUERY  =  "SELECT * FROM supcateg".
+        ObjCommand:CommandText = HOTHNOQUERY.
+        ObjRecordSet = ObjCommand:EXECUTE ( OUTPUT cOdbcNULL, "", 32 ).
+ 
+        IF ObjRecordSet:RecordCount > 0 AND ObjRecordSet:RecordCount NE ?
+        THEN
+        DO:
+            ObjRecordSet:MoveFirst NO-ERROR.
+            EMPTY TEMP-TABLE tt-HOTH2.
+ 
+            DO iLoop = 1 TO ObjRecordSet:RecordCount:
+                CREATE tt-HOTH2.
+                ASSIGN tt-HOTH2.cNo       = ObjRecordSet:FIELDS("NO"):VALUE
+                       tt-HOTH2.cCategory = ObjRecordSet:FIELDS("CATEGORY"):VALUE.
+ 
+                ObjRecordSet:MoveNext NO-ERROR.
+            END.
+        END.
+ 
+ 
+ 
+        cOdbcQUERY = "SELECT * FROM supextra, supevent WHERE supextra.sfieldno = 10003
+                                                         AND supextra.szfield like 'imj0%'
+                                                         AND supevent.reference = supextra.szkey".
+ 
+        ActivityQuery  =  "SELECT * FROM supactiv WHERE Scompleted = '0'".
+        ObjCommand:CommandText = ActivityQuery.
+        ObjRecordSet = ObjCommand:EXECUTE ( OUTPUT cOdbcNULL, "", 32 ).
+ 
+        IF ObjRecordSet:RecordCount > 0 AND ObjRecordSet:RecordCount NE ? THEN
+        DO:
+            ObjRecordSet:MoveFirst NO-ERROR.
+            EMPTY TEMP-TABLE tt-Activities.
+ 
+            DO iLoop = 1 TO ObjRecordSet:RecordCount:
+                CREATE tt-Activities.
+                ASSIGN tt-Activities.cSzreference = ObjRecordSet:FIELDS("SZREFERENCE"):VALUE.
+                       tt-Activities.cSAction     = ObjRecordSet:FIELDS("SACTION"):VALUE.
+                       tt-Activities.cSzassingee  = ObjRecordSet:FIELDS("SZASSIGNEE"):VALUE.
+                       tt-Activities.cDtschdate   = ObjRecordSet:FIELDS("DTSCHDATE"):VALUE.
+ 
+                ASSIGN tt-Activities.cDtschdate = SUBSTRING(tt-Activities.cDtschdate,1,10).
+ 
+                IF tt-Activities.cDtschdate = "01/01/1900" THEN
+                tt-Activities.cDtschdate = "".
+ 
+                ObjRecordSet:MoveNext NO-ERROR.
+            END.
+        END.
+ 
+ 
+    /* Release The Memory */
+        RELEASE OBJECT ObjConnection NO-ERROR.
+        RELEASE OBJECT ObjCommand    NO-ERROR.
+        RELEASE OBJECT ObjRecordSet  NO-ERROR.
+ 
+    END.
+END PROCEDURE.   
+ 
+ 
+ 
+/*------------------------------------------------------------------------
+        Procedure   : createxls
+        Purpose     : Provides data for Temp-Table tt-Data
+                     
+       
+        Description : Populates the tt-Data Temp-table,
+                      Assigns data to tt-Data,
+                      then produces a .CSV/XLS
+            
+        Author(s)   : enl
+        Created     : Thu Jun 29 11:42:40 BST 2017
+        Notes       :
+      ----------------------------------------------------------------------*/
+    PROCEDURE createxls:
+ 
+    DEFINE VARIABLE clv-blank-file-name   AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE clv-new-file-folder   AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE clv-file-type         AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE ilv-line              AS INTEGER    NO-UNDO.
+    DEFINE VARIABLE chExcelApp            AS COM-HANDLE NO-UNDO.
+    DEFINE VARIABLE chWorkBook            AS COM-HANDLE NO-UNDO.
+    DEFINE VARIABLE chWorkSheet           AS COM-HANDLE NO-UNDO.
+    DEFINE VARIABLE cexcelAppl            AS COM-HANDLE NO-UNDO.
+    DEFINE VARIABLE clv-title             AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE clv-temp              AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE ilv-right-align       AS INTEGER    NO-UNDO INITIAL -4152.  /* Right Align = -4152. Left Align = -4131 Centre = -4108 */
+    DEFINE VARIABLE ilv-left-align        AS INTEGER    NO-UNDO INITIAL -4131.
+    DEFINE VARIABLE ilv-centre-align      AS INTEGER    NO-UNDO INITIAL -4108.
+    DEFINE VARIABLE clv-format-as-text    AS CHARACTER  NO-UNDO INITIAL '@'.
+    DEFINE VARIABLE clv-line-to-add-range AS CHARACTER  NO-UNDO.
+    DEFINE VARIABLE clv-curr-line-range   AS CHARACTER  NO-UNDO.
+ 
+           /*New Template:*/
+/*    ASSIGN clv-blank-file-name = ".\input\jobs-blank2.xlsx"*/
+      ASSIGN clv-blank-file-name = ".\input\" + clv-name-of-template
+           /*Old Template:
+           clv-blank-file-name = ".\input\jobs-blank.xlsx"*/
+           clv-new-file-folder = "c:\temp".
+ 
+    FILE-INFO:FILE-NAME = clv-blank-file-name.
+    IF FILE-INFO:FULL-PATHNAME = ? THEN
+    DO:
+        MESSAGE "Blank Jobs template file (XLS file) is missing." SKIP
+                'Looking for file: ' clv-blank-file-name VIEW-AS ALERT-BOX ERROR.
+        RETURN ERROR.
+    END.
+ 
+/*    clv-file-type = FILE-INFO:FULL-PATHNAME.                                                             */
+/*    IF NUM-ENTRIES(clv-file-type,'.') NE 3 THEN                                                          */
+/*    DO:                                                                                                  */
+/*        MESSAGE "Unable to establish file type from blank file - report aborted" VIEW-AS ALERT-BOX ERROR.*/
+/*        RETURN ERROR.                                                                                    */
+/*    END.                                                                                                 */
+ 
+/*    clv-file-type = ENTRY(3,clv-file-type,'.').*/
+ 
+    FILE-INFO:FILE-NAME = clv-new-file-folder.
+    IF FILE-INFO:FULL-PATHNAME = ? THEN
+    DO:
+        MESSAGE "Output folder cannot be found" SKIP(1)
+                'Looking for folder: ' clv-new-file-folder VIEW-AS ALERT-BOX ERROR.
+        RETURN ERROR.
+    END.
+ 
+    clv-filename = 'Support-Jobs-'
+                + STRING(YEAR(TODAY), "9999")
+                + STRING(MONTH(TODAY), "99")
+                + STRING(DAY(TODAY), "99").
+               
+    clv-filename-plus-ext = clv-filename + '.xlsx'.
+   
+    clv-new-xls-name = clv-new-file-folder + '\' + clv-filename + ".xlsx".
+ 
+    IF SEARCH(clv-new-xls-name) NE ? THEN
+    DO:
+        /* File Already Exists So Add Numeric Suffix */
+        DO ilv-i = 2 TO 1000:
+            clv-temp = clv-new-file-folder + '\' + clv-filename + '-' + STRING(ilv-i) + "." + clv-file-type.
+            IF SEARCH(clv-temp) NE ? THEN
+            NEXT.
+            clv-new-xls-name = clv-temp.
+            LEAVE.
+        END.
+    END.
+ 
+ 
+ 
+    /* 1. Copy Blank xls To New File
+       2. Open New File
+       3. Populate New File
+       4. Save and Close Down Excel
+       5. Open New File */
+ 
+  
+    OS-COPY VALUE(clv-blank-file-name) VALUE(clv-new-xls-name).   /* 1. Copy blank xls to new file  */
+ 
+    CREATE "Excel.Application":U chExcelApp.                    /* 2. Open new xls file */
+ 
+    ASSIGN chExcelApp:VISIBLE     = FALSE
+           chWorkBook             = chExcelApp:Workbooks:OPEN(clv-new-xls-name)
+           chWorkSheet            = chExcelApp:Sheets:ITEM(1)        
+           chExcelApp:calculation = 3. /* Turn off formula calculation so calculated cells dont recalculate after each cell amended */
+    /* 3. Populate New xls File */
+    ilv-line = 6.
+   
+    FOR EACH tt-Data:
+        ilv-line = ilv-line + 1.
+ 
+        /* Copy current line to line below to preserve the formats and print area settings associated with the current line */
+        ASSIGN clv-curr-line-range   = STRING(ilv-line) + ':' + STRING(ilv-line)
+               clv-line-to-add-range = STRING(ilv-line + 1) + ':' + STRING(ilv-line + 1).
+ 
+        chWorkSheet:Range(clv-line-to-add-range):INSERT.       /* Insert Line */
+        chWorkSheet:Range(clv-curr-line-range):SELECT.         /* Select Current Line */
+        chWorkSheet:Range(clv-curr-line-range):COPY.           /* Copy Contents Of Previous Line */
+        chWorkSheet:Range("A"  + STRING(ilv-line + 1)):SELECT. /* Select Cell In To Which Copied Cell Will Be Pasted */
+        chWorkSheet:PASTESPECIAL().                            /* Paste Copied Line In To New Line */
+        /* Alignment */
+ 
+        /* Data */
+        ASSIGN
+               chWorkSheet:Range("A"  + STRING(ilv-line)):VALUE = tt-Data.iSequenceNumber
+               chWorkSheet:Range("B"  + STRING(ilv-line)):VALUE = tt-Data.cDisplayStatus
+               chWorkSheet:Range("C"  + STRING(ilv-line)):VALUE = tt-Data.cJOBDISP
+               chWorkSheet:Range("D"  + STRING(ilv-line)):VALUE = tt-Data.cJOBDEPT
+               chWorkSheet:Range("E"  + STRING(ilv-line)):VALUE = tt-Data.cCustomerAccount
+               chWorkSheet:Range("F"  + STRING(ilv-line)):VALUE = tt-Data.cCustomerName
+               chWorkSheet:Range("G"  + STRING(ilv-line)):VALUE = tt-Data.cProductDescription
+               chWorkSheet:Range("H"  + STRING(ilv-line)):VALUE = tt-Data.cJobStatus
+               chWorkSheet:Range("I"  + STRING(ilv-line)):VALUE = tt-Data.dUnprocessedCosts
+               chWorkSheet:Range("J"  + STRING(ilv-line)):VALUE = tt-Data.dProcessedCosts
+               chWorkSheet:Range("K"  + STRING(ilv-line)):VALUE = tt-Data.dTotalCosts
+               chWorkSheet:Range("L"  + STRING(ilv-line)):VALUE = tt-Data.dUnprocessedSales
+               chWorkSheet:Range("M"  + STRING(ilv-line)):VALUE = tt-Data.dProcessedSales
+               chWorkSheet:Range("N"  + STRING(ilv-line)):VALUE = tt-Data.dTotalSales
+               chWorkSheet:Range("O"  + STRING(ilv-line)):VALUE = tt-Data.dProfit
+               chWorkSheet:Range("P"  + STRING(ilv-line)):VALUE = tt-Data.cQuoteNumber
+               chWorkSheet:Range("Q"  + STRING(ilv-line)):VALUE = tt-Data.dCostTotal
+               chWorkSheet:Range("R"  + STRING(ilv-line)):VALUE = tt-Data.dSalesTotal
+               chWorkSheet:Range("S"  + STRING(ilv-line)):VALUE = tt-Data.dQuoteProfit
+               chWorkSheet:Range("T"  + STRING(ilv-line)):VALUE = tt-Data.cReference
+               chWorkSheet:Range("U"  + STRING(ilv-line)):VALUE = tt-Data.cCatstatus-desc
+               chWorkSheet:Range("V"  + STRING(ilv-line)):VALUE = tt-Data.cSsubtype-desc
+               chWorkSheet:Range("W"  + STRING(ilv-line)):VALUE = tt-Data.cCattype-desc
+               chWorkSheet:Range("X"  + STRING(ilv-line)):VALUE = tt-Data.cHandlertag
+               chWorkSheet:Range("Y"  + STRING(ilv-line)):VALUE = tt-Data.cActiondate
+               chWorkSheet:Range("Z"  + STRING(ilv-line)):VALUE = tt-Data.cSAction-desc
+               chWorkSheet:Range("AA"  + STRING(ilv-line)):VALUE = tt-Data.cSzassingee
+               chWorkSheet:Range("AB" + STRING(ilv-line)):VALUE = tt-Data.cDtschdate.
+       
+/*        ASSIGN chWorkSheet:Range("A"  + STRING(ilv-line)):VALUE = tt-Data.cJOBDISP           */
+/*               chWorkSheet:Range("B"  + STRING(ilv-line)):VALUE = tt-Data.cJOBDEPT           */
+/*               chWorkSheet:Range("C"  + STRING(ilv-line)):VALUE = tt-Data.cCustomerAccount   */
+/*               chWorkSheet:Range("D"  + STRING(ilv-line)):VALUE = tt-Data.cCustomerName      */
+/*               chWorkSheet:Range("E"  + STRING(ilv-line)):VALUE = tt-Data.cProductDescription*/
+/*               chWorkSheet:Range("F"  + STRING(ilv-line)):VALUE = tt-Data.cJobStatus         */
+/*               chWorkSheet:Range("G"  + STRING(ilv-line)):VALUE = tt-Data.dUnprocessedCosts  */
+/*               chWorkSheet:Range("H"  + STRING(ilv-line)):VALUE = tt-Data.dProcessedCosts    */
+/*               chWorkSheet:Range("I"  + STRING(ilv-line)):VALUE = tt-Data.dTotalCosts        */
+/*               chWorkSheet:Range("J"  + STRING(ilv-line)):VALUE = tt-Data.dUnprocessedSales  */
+/*               chWorkSheet:Range("K"  + STRING(ilv-line)):VALUE = tt-Data.dProcessedSales    */
+/*               chWorkSheet:Range("L"  + STRING(ilv-line)):VALUE = tt-Data.dTotalSales        */
+/*               chWorkSheet:Range("M"  + STRING(ilv-line)):VALUE = tt-Data.dProfit            */
+/*               chWorkSheet:Range("N"  + STRING(ilv-line)):VALUE = tt-Data.cQuoteNumber       */
+/*               chWorkSheet:Range("O"  + STRING(ilv-line)):VALUE = tt-Data.dCostTotal         */
+/*               chWorkSheet:Range("P"  + STRING(ilv-line)):VALUE = tt-Data.dSalesTotal        */
+/*               chWorkSheet:Range("Q"  + STRING(ilv-line)):VALUE = tt-Data.dQuoteProfit       */
+/*               chWorkSheet:Range("R"  + STRING(ilv-line)):VALUE = tt-Data.cReference         */
+/*               chWorkSheet:Range("S"  + STRING(ilv-line)):VALUE = tt-Data.cCatstatus-desc    */
+/*               chWorkSheet:Range("T"  + STRING(ilv-line)):VALUE = tt-Data.cSsubtype-desc     */
+/*               chWorkSheet:Range("U"  + STRING(ilv-line)):VALUE = tt-Data.cCattype-desc      */
+/*               chWorkSheet:Range("V"  + STRING(ilv-line)):VALUE = tt-Data.cHandlertag        */
+/*               chWorkSheet:Range("W"  + STRING(ilv-line)):VALUE = tt-Data.cActiondate        */
+/*               chWorkSheet:Range("X"  + STRING(ilv-line)):VALUE = tt-Data.cSAction-desc      */
+/*               chWorkSheet:Range("Y"  + STRING(ilv-line)):VALUE = tt-Data.cSzassingee        */
+/*               chWorkSheet:Range("Z"  + STRING(ilv-line)):VALUE = tt-Data.cDtschdate         */
+/*               chWorkSheet:Range("AA" + STRING(ilv-line)):VALUE = tt-Data.iSequenceNumber.   */
+    END.
+ 
+ 
+    chWorkSheet:Range("A1:AA"+ STRING(ilv-line)):COLUMNS:Autofit()   NO-ERROR.
+    chWorkSheet:Range("A1:AA"+ STRING(ilv-line)):PageSetup:PrintArea NO-ERROR.
+ 
+    chExcelApp:ScreenUpdating = YES.
+    chExcelApp:calculation = 1.     /* Now all data in spreadsheet turn on formula calculation so calculated cells get populated */
+ 
+                
+    RELEASE OBJECT chWorkSheet.     /*Save and close then re-open so user can just close it without being asked to also save it*/
+    chWorkBook:SAVE().
+    chWorkBook:APPLICATION:CutCopyMode = FALSE.
+    chWorkBook:CLOSE().
+    RELEASE OBJECT chWorkBook.
+    chExcelApp:QUIT().
+   
+                                                                                   
+    
+ 
+  
+END PROCEDURE.
